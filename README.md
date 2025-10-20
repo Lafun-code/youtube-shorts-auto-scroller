@@ -1,6 +1,6 @@
 # YouTube Shorts Auto Scroller
 
-Chrome extension - Automatically moves to the next YouTube Shorts video when one ends.
+Automatically moves to the next YouTube Shorts video when one ends.
 
 ![Site Screenshot](https://i.imgur.com/sPuI8DL.png)
 
