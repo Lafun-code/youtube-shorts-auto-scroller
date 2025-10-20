@@ -2,6 +2,9 @@
 
 Chrome extension - Automatically moves to the next YouTube Shorts video when one ends.
 
+(https://i.imgur.com/sPuI8DL.png)
+
+
 ## 🚀 Installation
 1. Click the “Code” button on this page and select “Download ZIP”
 2. Open the ZIP file
