@@ -16,5 +16,3 @@ Chrome extension - Automatically moves to the next YouTube Shorts video when one
 
 ## 📞 Support
 Submit your questions via the GitHub Issues section.
-
-Translated with DeepL.com (free version)
