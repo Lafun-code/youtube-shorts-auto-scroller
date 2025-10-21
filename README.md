@@ -15,7 +15,7 @@ Automatically moves to the next YouTube Shorts video when one ends.
 ##⚡ Easy Installation
 
 Simply install it directly from the Edge Add-ons Store:
-![👉 YouTube Shorts Auto Scroller — Microsoft Edge Add-ons]([https://i.imgur.com/MmXfmOW.png](https://microsoftedge.microsoft.com/addons/detail/youtube-shorts-auto-scoll/gbbcmkallkhceeelfjomjndohfmgbdji))
+[👉 YouTube Shorts Auto Scroller — Microsoft Edge Add-ons]([https://i.imgur.com/MmXfmOW.png](https://microsoftedge.microsoft.com/addons/detail/youtube-shorts-auto-scoll/gbbcmkallkhceeelfjomjndohfmgbdji))
 
 
 ## ✅ Features
