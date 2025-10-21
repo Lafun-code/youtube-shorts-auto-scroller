@@ -2,7 +2,7 @@
 
 Automatically moves to the next YouTube Shorts video when one ends.
 
-![Site Screenshot](https://i.imgur.com/sPuI8DL.png)
+![Site Screenshot](https://i.imgur.com/MmXfmOW.png)
 
 
 ## 🚀 Installation
