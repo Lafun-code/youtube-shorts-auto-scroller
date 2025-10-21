@@ -2,7 +2,7 @@ body {
   margin: 0;
   padding: 0;
   width: 300px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #667eea00 0%, #6f607e00 100%);
   font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
 }
 
