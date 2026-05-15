@@ -9,14 +9,12 @@ document.addEventListener('DOMContentLoaded', function() {
     updateStatusUI(isEnabled);
   });
 
-
   toggleSwitch.addEventListener('change', function() {
     const isEnabled = this.checked;
     chrome.storage.sync.set({ isEnabled: isEnabled }, function() {
-      console.log('Auto scroll durumu:', isEnabled ? 'AÇIK' : 'KAPALI');
+      console.log('Auto scroll status:', isEnabled ? 'ON' : 'OFF');
       updateStatusUI(isEnabled);
       
-
       chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
         if (tabs[0].url.includes('youtube.com')) {
           chrome.tabs.sendMessage(tabs[0].id, {action: "toggle", enabled: isEnabled});
@@ -24,7 +22,6 @@ document.addEventListener('DOMContentLoaded', function() {
       });
     });
   });
-
 
   function updateStatusUI(isEnabled) {
     if (isEnabled) {
@@ -37,7 +34,6 @@ document.addEventListener('DOMContentLoaded', function() {
       statusIndicator.className = 'status-indicator inactive';
     }
   }
-
 
   document.querySelector('.github-link').addEventListener('click', function(e) {
     e.preventDefault();

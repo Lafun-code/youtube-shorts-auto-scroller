@@ -64,19 +64,13 @@ function createStatusIndicator() {
     }
   `;
   document.head.appendChild(style);
-  
   document.body.appendChild(statusElement);
 }
 
 // Update notification
 function updateStatusIndicator() {
   if (!statusElement) return;
-  
-  if (isEnabled) {
-    statusElement.style.display = 'flex';
-  } else {
-    statusElement.style.display = 'none';
-  }
+  statusElement.style.display = isEnabled ? 'flex' : 'none';
 }
 
 // Remove notification
@@ -90,7 +84,6 @@ function removeStatusIndicator() {
 // Start video progress tracking
 function startProgressTracking() {
   if (!currentVideo || !isEnabled) return;
-  
   stopProgressTracking(); // Clear previous interval
   
   lastCurrentTime = 0;
@@ -103,28 +96,37 @@ function startProgressTracking() {
     
     const currentTime = currentVideo.currentTime;
     const duration = currentVideo.duration;
+
+    // We no longer return early for state < 3.
+    // Instead we handle buffering gracefully inside the stuck check below.
     
-    // If the video is nearing its end
-    if (duration - currentTime <= 0.5) {
-      console.log('[Shorts Scroller] Video is nearing its end, scroll is being prepared');
+    // If the video is truly at its end (0.1 buffer threshold is safer than 0.05 for floating point issues)
+    if (duration > 0 && (duration - currentTime <= 0.15)) {
+      console.log('[Shorts Scroller] Video has ended, scrolling');
       handleVideoEnd();
       return;
     }
     
-    // Check if the video is stuttering (stutter detection)
+    // Check if the video duration is not moving forward
     if (currentTime === lastCurrentTime && currentTime > 0) {
-      stutterCount++;
-      if (stutterCount > 10) { // 2 saniye boyunca takılıyorsa
-        console.log('[Shorts Scroller] Video stuck, trying alternative scroll');
-        handleVideoEnd();
-        return;
+      // Only count as stutter if the browser actually thinks it has data to play.
+      // If readyState < 3, it's buffering (so we wait, don't count as stuck).
+      if (currentVideo.readyState >= 3) {
+        stutterCount++;
+        if (stutterCount > 15) { // 3 seconds timeout
+          console.log('[Shorts Scroller] Video seems stuck, scrolling');
+          handleVideoEnd();
+          return;
+        }
+      } else {
+        // Buffering, reset stutter count so we don't skip
+        stutterCount = 0;
       }
     } else {
       stutterCount = 0;
     }
     
     lastCurrentTime = currentTime;
-    
   }, 200); // Check every 200ms
 }
 
@@ -175,12 +177,13 @@ function scrollToNext() {
 
     // METHOD 2: Find and scroll the scroll container (backup method)
     setTimeout(() => {
-      if (!currentVideo) { // Hala video bulunamadıysa
+      // If a video still isn't found
+      if (!currentVideo) {
         scrollUsingContainer();
       }
     }, 500);
 
-    // Yeni videoyu ara
+    // Search for a new video
     clearTimeout(retryTimeout);
     findAndAttachToNewVideo(0);
 
@@ -221,7 +224,7 @@ function scrollUsingContainer() {
       const container = document.querySelector(selector);
       if (container) {
         container.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
-        console.log('[Shorts Scroller] Container scrolling has been done:', selector);
+        console.log('[Shorts Scroller] Container scrolling was successful:', selector);
         break;
       }
     }
@@ -238,7 +241,7 @@ function findAndAttachToNewVideo(retryCount = 0) {
     return;
   }
 
-  if (retryCount > 200) { // 20 saniye
+  if (retryCount > 200) { // Limit retry duration (approx 20 seconds)
     console.error('[Shorts Scroller] Video not found - maximum attempts exceeded');
     
     // Last resort: try recrawling the page
@@ -269,7 +272,7 @@ function findAndAttachToNewVideo(retryCount = 0) {
     for (const video of videos) {
       // Visibility control - more flexible
       const rect = video.getBoundingClientRect();
-      const isVisible = rect.height > 100 && rect.width > 100; // Minimum boyut
+      const isVisible = rect.height > 100 && rect.width > 100; // Minimum size check
       const isInViewport = rect.top >= 0 && rect.top < window.innerHeight;
       
       // Video src control
@@ -316,7 +319,7 @@ function findAndAttachToNewVideo(retryCount = 0) {
     }
     
     // If the video is already finished, scroll immediately
-    if (currentVideo.ended || (currentVideo.duration && currentVideo.currentTime >= currentVideo.duration - 0.5)) {
+    if (currentVideo.ended || (currentVideo.duration > 0 && currentVideo.duration - currentVideo.currentTime <= 0.05)) {
       console.log('[Shorts Scroller] The video is already finished, scrolling');
       setTimeout(handleVideoEnd, 100);
     }
@@ -332,7 +335,7 @@ function findAndAttachToNewVideo(retryCount = 0) {
 function observePageChanges() {
   const observer = new MutationObserver(() => {
     if (isEnabled && (!currentVideo || !document.contains(currentVideo))) {
-      console.log('[Shorts Scroller] Page changed, searching for video again');
+      console.log('[Shorts Scroller] DOM changed, searching for video again');
       stopProgressTracking();
       currentVideo = null;
       findAndAttachToNewVideo(0);
@@ -357,7 +360,7 @@ function loadStateAndStart() {
     const wasEnabled = isEnabled;
     isEnabled = !!result.isEnabled;
     
-    console.log('[Shorts Scroller] Status:', isEnabled ? 'ACTIVE' : 'PASSIVE');
+    console.log('[Shorts Scroller] Status:', isEnabled ? 'ACTIVE' : 'INACTIVE');
     
     if (isEnabled && !wasEnabled) {
       // The plugin is opened
@@ -377,7 +380,7 @@ function loadStateAndStart() {
       
       findAndAttachToNewVideo(0);
       
-    } else if (!isEnabled && wasEnabled) {
+    } else if (!isEnabled) { // Ensure cleanup if disabled OR moving away from Shorts
       // Plugin closed
       cleanup();
     }
@@ -391,6 +394,7 @@ function cleanup() {
     currentVideo.removeEventListener('play', handleVideoPlay);
     currentVideo.removeEventListener('pause', handleVideoPause);
   }
+  isEnabled = false;
   currentVideo = null;
   lastPlayedSrc = null;
   clearTimeout(retryTimeout);
@@ -408,8 +412,11 @@ function cleanup() {
 // Event listener's
 chrome.storage.onChanged.addListener(function(changes) {
   if (changes.isEnabled) {
-    console.log('[Shorts Scroller] The situation has changed');
-    loadStateAndStart();
+    console.log('[Shorts Scroller] State has changed');
+    // Only reload state if we are actually still on a Shorts page
+    if (window.location.href.includes('/shorts')) {
+      loadStateAndStart();
+    }
   }
 });
 
@@ -421,29 +428,46 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// Check when the page loads or updates
-function initialize() {
-  console.log('[Shorts Scroller] Improved version uploaded');
-  
-  // If we are on the YouTube Shorts page, launch it
-  if (window.location.href.includes('/shorts') || document.querySelector('ytd-reel-video-renderer')) {
+// CHECK URL AND START PROPERLY FOR YOUTUBE SPA
+function checkURLAndStart() {
+  if (window.location.href.includes('/shorts')) {
+    console.log('[Shorts Scroller] Shorts page detected');
     loadStateAndStart();
   } else {
-    // Listen when you go to the Shorts page
-    const urlObserver = new MutationObserver(() => {
-      if (window.location.href.includes('/shorts') || document.querySelector('ytd-reel-video-renderer')) {
-        console.log('[Shorts Scroller] Shorts page detected');
-        loadStateAndStart();
-        urlObserver.disconnect();
-      }
-    });
-    
-    urlObserver.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
+    console.log('[Shorts Scroller] Navigated away from Shorts');
+    cleanup();
   }
 }
+
+// Initialize on load and YouTube native navigation
+function initialize() {
+  console.log('[Shorts Scroller] Extension initialized');
+  
+  // Initial Check
+  checkURLAndStart();
+
+  // Listen for YouTube's custom navigation events
+  window.addEventListener('yt-navigate-finish', () => {
+    checkURLAndStart();
+  });
+
+  // Fallback for location changes using MutationObserver on body/title
+  const titleObserver = new MutationObserver(() => {
+    // Only check if URL changed to/from shorts
+    const isNowShorts = window.location.href.includes('/shorts');
+    const wasShorts = isEnabled; // if it was enabled, we were on shorts
+    
+    if (isNowShorts !== wasShorts) {
+       checkURLAndStart();
+    }
+  });
+  
+  const title = document.querySelector('title');
+  if (title) {
+    titleObserver.observe(title, { childList: true });
+  }
+}
+
 
 // Start
 initialize();
