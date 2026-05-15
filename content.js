@@ -1,6 +1,6 @@
 let isEnabled = false;
 let currentVideo = null;
-let lastPlayedSrc = null;
+let lastVideoElement = null;
 let retryTimeout = null;
 let statusElement = null;
 let progressCheckInterval = null;
@@ -152,7 +152,7 @@ function scrollToNext() {
 
   try {
     if (currentVideo) {
-      lastPlayedSrc = currentVideo.src || currentVideo.currentSrc;
+      lastVideoElement = currentVideo;
       // Remove event listeners from current video
       currentVideo.removeEventListener('ended', handleVideoEnd);
       currentVideo.removeEventListener('play', handleVideoPlay);
@@ -161,27 +161,29 @@ function scrollToNext() {
     currentVideo = null;
     stopProgressTracking();
 
-    // METHOD 1: Keyboard event (main method)
-    const keyboardEvent = new KeyboardEvent('keydown', {
-      key: 'ArrowDown',
-      code: 'ArrowDown',
-      keyCode: 40,
-      which: 40,
-      bubbles: true,
-      cancelable: true,
-      composed: true
-    });
+    // METHOD 1: Click the native "Next" button in YouTube Shorts
+    let clicked = false;
+    const nextButton = document.querySelector('#navigation-button-down button') || 
+                       document.querySelector('#navigation-button-down ytd-button-renderer');
     
-    document.dispatchEvent(keyboardEvent);
-    console.log('[Shorts Scroller] Keyboard event sent');
-
-    // METHOD 2: Find and scroll the scroll container (backup method)
-    setTimeout(() => {
-      // If a video still isn't found
-      if (!currentVideo) {
-        scrollUsingContainer();
-      }
-    }, 500);
+    if (nextButton) {
+      nextButton.click();
+      console.log('[Shorts Scroller] Clicked native Next button');
+      clicked = true;
+    } else {
+      // Fallback to keyboard event
+      const keyboardEvent = new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        code: 'ArrowDown',
+        keyCode: 40,
+        which: 40,
+        bubbles: true,
+        cancelable: true,
+        composed: true
+      });
+      document.dispatchEvent(keyboardEvent);
+      console.log('[Shorts Scroller] Native button not found, Keyboard event sent');
+    }
 
     // Search for a new video
     clearTimeout(retryTimeout);
@@ -189,8 +191,6 @@ function scrollToNext() {
 
   } catch (e) {
     console.error('[Shorts Scroller] Error:', e);
-    // Try alternative method in case of error
-    setTimeout(scrollUsingContainer, 200);
   }
 }
 
@@ -206,31 +206,6 @@ function handleVideoPlay() {
 function handleVideoPause() {
   console.log('[Shorts Scroller] Video paused');
   stopProgressTracking();
-}
-
-// Alternative scroll method - container-based
-function scrollUsingContainer() {
-  try {
-    // Various possible scroll containers
-    const selectors = [
-      'ytd-reel-video-renderer',
-      '#shorts-container',
-      'ytd-shorts',
-      '.reel-video-in-sequence',
-      'ytd-rich-section-renderer'
-    ];
-
-    for (const selector of selectors) {
-      const container = document.querySelector(selector);
-      if (container) {
-        container.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
-        console.log('[Shorts Scroller] Container scrolling was successful:', selector);
-        break;
-      }
-    }
-  } catch (e) {
-    console.error('[Shorts Scroller] Container scroll error:', e);
-  }
 }
 
 // Improved video finding function
@@ -270,16 +245,15 @@ function findAndAttachToNewVideo(retryCount = 0) {
     const videos = document.querySelectorAll(selector);
     
     for (const video of videos) {
+      // Is it a completely new element?
+      const isNewElement = (video !== lastVideoElement);
+      
       // Visibility control - more flexible
       const rect = video.getBoundingClientRect();
       const isVisible = rect.height > 100 && rect.width > 100; // Minimum size check
       const isInViewport = rect.top >= 0 && rect.top < window.innerHeight;
       
-      // Video src control
-      const videoSrc = video.src || video.currentSrc;
-      const isNew = !lastPlayedSrc || videoSrc !== lastPlayedSrc;
-      
-      if (isVisible && isInViewport && isNew && video.readyState >= 1) {
+      if (isVisible && isInViewport && isNewElement && video.readyState >= 1) {
         newVideoElement = video;
         break;
       }
@@ -292,7 +266,7 @@ function findAndAttachToNewVideo(retryCount = 0) {
     console.log('[Shorts Scroller] New video found:', newVideoElement);
     
     currentVideo = newVideoElement;
-    lastPlayedSrc = currentVideo.src || currentVideo.currentSrc;
+    lastVideoElement = currentVideo;
     
     // Remove the loop property
     if (currentVideo.hasAttribute('loop')) {
@@ -364,7 +338,7 @@ function loadStateAndStart() {
     
     if (isEnabled && !wasEnabled) {
       // The plugin is opened
-      lastPlayedSrc = null;
+      lastVideoElement = null;
       currentVideo = null;
       clearTimeout(retryTimeout);
       stopProgressTracking();
@@ -396,7 +370,7 @@ function cleanup() {
   }
   isEnabled = false;
   currentVideo = null;
-  lastPlayedSrc = null;
+  lastVideoElement = null;
   clearTimeout(retryTimeout);
   stopProgressTracking();
   
