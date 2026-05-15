@@ -1,11 +1,8 @@
 let isEnabled = false;
 let currentVideo = null;
-let lastVideoElement = null;
+let lastPlayedSrc = null;
 let retryTimeout = null;
 let statusElement = null;
-let progressCheckInterval = null;
-let lastCurrentTime = 0;
-let stutterCount = 0;
 
 // Create notification element
 function createStatusIndicator() {
@@ -81,61 +78,42 @@ function removeStatusIndicator() {
   }
 }
 
-// Start video progress tracking
-function startProgressTracking() {
-  if (!currentVideo || !isEnabled) return;
-  stopProgressTracking(); // Clear previous interval
-  
-  lastCurrentTime = 0;
-  stutterCount = 0;
-  
-  progressCheckInterval = setInterval(() => {
-    if (!currentVideo || !isEnabled || currentVideo.paused || currentVideo.ended) {
-      return;
-    }
-    
-    const currentTime = currentVideo.currentTime;
-    const duration = currentVideo.duration;
+// Handle video progress natively via events instead of setInterval polling
+function handleTimeUpdate() {
+  if (!currentVideo || !isEnabled || currentVideo.paused || currentVideo.ended) return;
 
-    // We no longer return early for state < 3.
-    // Instead we handle buffering gracefully inside the stuck check below.
+  const currentTime = currentVideo.currentTime;
+  const duration = currentVideo.duration;
+
+  // We should be extremely resilient to floating point timing inaccuracies.
+  // 0.25 guarantees even slow machines catch this event right at the end.
+  if (duration > 0 && (duration - currentTime <= 0.25)) {
+    console.log('[Shorts Scroller] Video has ended (via timeupdate), scrolling');
+
+    // Detach listener immediately to prevent double fires
+    currentVideo.removeEventListener('timeupdate', handleTimeUpdate);
     
-    // If the video is truly at its end (0.1 buffer threshold is safer than 0.05 for floating point issues)
-    if (duration > 0 && (duration - currentTime <= 0.15)) {
-      console.log('[Shorts Scroller] Video has ended, scrolling');
-      handleVideoEnd();
-      return;
-    }
-    
-    // Check if the video duration is not moving forward
-    if (currentTime === lastCurrentTime && currentTime > 0) {
-      // Only count as stutter if the browser actually thinks it has data to play.
-      // If readyState < 3, it's buffering (so we wait, don't count as stuck).
-      if (currentVideo.readyState >= 3) {
-        stutterCount++;
-        if (stutterCount > 15) { // 3 seconds timeout
-          console.log('[Shorts Scroller] Video seems stuck, scrolling');
-          handleVideoEnd();
-          return;
-        }
-      } else {
-        // Buffering, reset stutter count so we don't skip
-        stutterCount = 0;
-      }
-    } else {
-      stutterCount = 0;
-    }
-    
-    lastCurrentTime = currentTime;
-  }, 200); // Check every 200ms
+    handleVideoEnd();
+  }
+}
+
+function handleWaiting() {
+  console.log('[Shorts Scroller] Video buffering...');
+}
+
+function handlePlaying() {
+  console.log('[Shorts Scroller] Video resumed playing');
+}
+
+// Start video progress tracking (simplified thanks to native events)
+function startProgressTracking() {
+  // We no longer need the 200ms setInterval polling loop.
+  // We rely on the 'timeupdate', 'ended', 'waiting', and 'playing' native events attached to currentVideo.
 }
 
 // Stop video progress tracking
 function stopProgressTracking() {
-  if (progressCheckInterval) {
-    clearInterval(progressCheckInterval);
-    progressCheckInterval = null;
-  }
+  // Intervals are entirely removed in favor of event delegation on the video element itself.
 }
 
 // End of video processing
@@ -152,24 +130,28 @@ function scrollToNext() {
 
   try {
     if (currentVideo) {
-      lastVideoElement = currentVideo;
+      lastPlayedSrc = currentVideo.src || currentVideo.currentSrc;
       // Remove event listeners from current video
       currentVideo.removeEventListener('ended', handleVideoEnd);
       currentVideo.removeEventListener('play', handleVideoPlay);
       currentVideo.removeEventListener('pause', handleVideoPause);
+      currentVideo.removeEventListener('timeupdate', handleTimeUpdate);
+      currentVideo.removeEventListener('waiting', handleWaiting);
+      currentVideo.removeEventListener('playing', handlePlaying);
     }
-    currentVideo = null;
+    
+    currentVideo = null; // Important: Clear it so the observer recognizes we need a new video
+    
     stopProgressTracking();
 
     // METHOD 1: Click the native "Next" button in YouTube Shorts
-    let clicked = false;
     const nextButton = document.querySelector('#navigation-button-down button') || 
-                       document.querySelector('#navigation-button-down ytd-button-renderer');
+                       document.querySelector('#navigation-button-down ytd-button-renderer') ||
+                       document.querySelector('ytd-button-renderer#navigation-button-down button');
     
     if (nextButton) {
       nextButton.click();
       console.log('[Shorts Scroller] Clicked native Next button');
-      clicked = true;
     } else {
       // Fallback to keyboard event
       const keyboardEvent = new KeyboardEvent('keydown', {
@@ -210,8 +192,9 @@ function handleVideoPause() {
 
 // Improved video finding function
 function findAndAttachToNewVideo(retryCount = 0) {
+  clearTimeout(retryTimeout); // PREVENT CONCURRENT LEAKS
+
   if (!isEnabled) {
-    clearTimeout(retryTimeout);
     stopProgressTracking();
     return;
   }
@@ -219,7 +202,7 @@ function findAndAttachToNewVideo(retryCount = 0) {
   if (retryCount > 200) { // Limit retry duration (approx 20 seconds)
     console.error('[Shorts Scroller] Video not found - maximum attempts exceeded');
     
-    // Last resort: try recrawling the page
+    // Last resort: try recrawling the page later if still enabled
     setTimeout(() => {
       if (isEnabled && !currentVideo) {
         console.log('[Shorts Scroller] Last resort: restarting the search');
@@ -229,44 +212,36 @@ function findAndAttachToNewVideo(retryCount = 0) {
     return;
   }
 
-  // More flexible video selectors
-  const videoSelectors = [
-    'ytd-reel-video-renderer[is-active] video.video-stream.html5-main-video',
-    'ytd-reel-video-renderer video.video-stream.html5-main-video',
-    'video.html5-main-video',
-    'video[src]',
-    '.shorts-video video'
-  ];
+  // 1. YouTube always marks the actively playing Short wrapper with the `is-active` attribute.
+  //    This is vastly more reliable than calculating bounding client rects.
+  const activeContainer = document.querySelector('ytd-reel-video-renderer[is-active]');
+  let newVideoElement = activeContainer ? activeContainer.querySelector('video') : null;
 
-  let newVideoElement = null;
-
-  // Try all selectors
-  for (const selector of videoSelectors) {
-    const videos = document.querySelectorAll(selector);
-    
-    for (const video of videos) {
-      // Is it a completely new element?
-      const isNewElement = (video !== lastVideoElement);
-      
-      // Visibility control - more flexible
-      const rect = video.getBoundingClientRect();
-      const isVisible = rect.height > 100 && rect.width > 100; // Minimum size check
-      const isInViewport = rect.top >= 0 && rect.top < window.innerHeight;
-      
-      if (isVisible && isInViewport && isNewElement && video.readyState >= 1) {
-        newVideoElement = video;
+  // Fallback to searching all videos and checking basic visibility
+  if (!newVideoElement) {
+    const videos = document.querySelectorAll('video');
+    for (const v of videos) {
+      const rect = v.getBoundingClientRect();
+      const isVisible = rect.height > 100 && rect.width > 100;
+      // top >= -50 gives us leeway for animations during the "Next" scroll logic
+      if (isVisible && rect.top >= -50 && rect.top < window.innerHeight) {
+        newVideoElement = v;
         break;
       }
     }
-    
-    if (newVideoElement) break;
   }
 
-  if (newVideoElement) {
+  // Evaluate if the newly discovered element constitutes a "fresh" video we haven't processed.
+  // Because YouTube reuses DOM elements (SPAs recycle <video> tags to save memory),
+  // we CANNOT compare `video !== lastVideoElement`. We MUST check if the `src` attribute changed!
+  const videoSrc = newVideoElement ? (newVideoElement.src || newVideoElement.currentSrc) : null;
+  const isNewSrc = videoSrc && (!lastPlayedSrc || videoSrc !== lastPlayedSrc);
+
+  if (newVideoElement && newVideoElement.readyState >= 1 && (isNewSrc || !lastPlayedSrc)) {
     console.log('[Shorts Scroller] New video found:', newVideoElement);
     
     currentVideo = newVideoElement;
-    lastVideoElement = currentVideo;
+    lastPlayedSrc = videoSrc;
     
     // Remove the loop property
     if (currentVideo.hasAttribute('loop')) {
@@ -282,25 +257,25 @@ function findAndAttachToNewVideo(retryCount = 0) {
     currentVideo.removeEventListener('ended', handleVideoEnd);
     currentVideo.removeEventListener('play', handleVideoPlay);
     currentVideo.removeEventListener('pause', handleVideoPause);
+    currentVideo.removeEventListener('timeupdate', handleTimeUpdate);
+    currentVideo.removeEventListener('waiting', handleWaiting);
+    currentVideo.removeEventListener('playing', handlePlaying);
     
     currentVideo.addEventListener('ended', handleVideoEnd);
     currentVideo.addEventListener('play', handleVideoPlay);
     currentVideo.addEventListener('pause', handleVideoPause);
-    
+    currentVideo.addEventListener('timeupdate', handleTimeUpdate);
+    currentVideo.addEventListener('waiting', handleWaiting);
+    currentVideo.addEventListener('playing', handlePlaying);
+
     // If the video is already playing, start progress tracking
     if (!currentVideo.paused && !currentVideo.ended) {
       startProgressTracking();
     }
     
-    // If the video is already finished, scroll immediately
-    if (currentVideo.ended || (currentVideo.duration > 0 && currentVideo.duration - currentVideo.currentTime <= 0.05)) {
-      console.log('[Shorts Scroller] The video is already finished, scrolling');
-      setTimeout(handleVideoEnd, 100);
-    }
-    
   } else {
-    // Smarter retry mechanism
-    const delay = retryCount < 50 ? 100 : 200;
+    // Retry finding the newly swapped video
+    const delay = retryCount < 50 ? 50 : 200; // Fast retries at first, then slow down
     retryTimeout = setTimeout(() => findAndAttachToNewVideo(retryCount + 1), delay);
   }
 }
@@ -308,10 +283,12 @@ function findAndAttachToNewVideo(retryCount = 0) {
 // Track page changes (for SPAs)
 function observePageChanges() {
   const observer = new MutationObserver(() => {
+    // If we lose currentVideo from the DOM, safely initiate a search
     if (isEnabled && (!currentVideo || !document.contains(currentVideo))) {
       console.log('[Shorts Scroller] DOM changed, searching for video again');
       stopProgressTracking();
       currentVideo = null;
+      clearTimeout(retryTimeout); // FIX MEMORY LEAK
       findAndAttachToNewVideo(0);
     }
   });
@@ -367,6 +344,9 @@ function cleanup() {
     currentVideo.removeEventListener('ended', handleVideoEnd);
     currentVideo.removeEventListener('play', handleVideoPlay);
     currentVideo.removeEventListener('pause', handleVideoPause);
+    currentVideo.removeEventListener('timeupdate', handleTimeUpdate);
+    currentVideo.removeEventListener('waiting', handleWaiting);
+    currentVideo.removeEventListener('playing', handlePlaying);
   }
   isEnabled = false;
   currentVideo = null;
