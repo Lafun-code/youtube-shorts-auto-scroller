@@ -405,13 +405,15 @@ function initialize() {
     checkURLAndStart();
   });
 
-  // Fallback for location changes using MutationObserver on body/title
+  let currentlyOnShorts = window.location.href.includes('/shorts');
+
+  // Fallback for location changes using MutationObserver on title
   const titleObserver = new MutationObserver(() => {
     // Only check if URL changed to/from shorts
     const isNowShorts = window.location.href.includes('/shorts');
-    const wasShorts = isEnabled; // if it was enabled, we were on shorts
     
-    if (isNowShorts !== wasShorts) {
+    if (isNowShorts !== currentlyOnShorts) {
+       currentlyOnShorts = isNowShorts;
        checkURLAndStart();
     }
   });
